@@ -10,6 +10,8 @@ const { buildSchema }  = require('graphql');
 
 const app = express();
 
+const events = [];
+
 // Middleware
 app.use(bodyParser.json());
 //express-graphql: Used as  a middleware. 
@@ -19,15 +21,34 @@ app.use(bodyParser.json());
 // forwards them to the right resolver
 app.use('/graphql', graphqlHttp({
         schema: buildSchema(`
+        type Event {
+            _id: ID!
+                #ID is a special data type, ! makes id non-nullable / required
+            title: String!
+            description: String!
+            price: Float!
+            date: String!
+                # there is no data type in graphQL
+        }
+
+        input EventInput {
+            # input is a special type that is similar to args in JS. 
+            # It will be an array of arguments to create an Event in this case
+            title: String!
+            description: String!
+            price: Float!
+            date: String!
+        }
+
         type RootQuery {
-            events: [String!]! 
-            # 1st ! means it will always return an array containing string values and no nulls
-            # & 2nd ! means it will always return an array and not just null
+            events: [Event!]! 
+                # 1st ! means it will always return an array containing Event objects and no nulls, or strings etc
+                # & 2nd ! means it will always return an array. It may be an empty array but not null
         }
 
         type RootMutation {
-            createEvent(name: String): String
-            # takes a string as parameter and will return or echo the name of the Event that was created
+            createEvent(eventInput: EventInput): Event
+                # takes a string as parameter and will return or echo the Event that was created
         }
 
             schema {
@@ -38,11 +59,19 @@ app.use('/graphql', graphqlHttp({
         rootValue: { // bundle of all resolvers
             // Resolver names have to match up to the queries / mutation names created above
             events: () => {
-                return ['Intro to Sewing', 'Sailing', 'All-Night Coding'];
+                return events;
             }, // this function will be called when an incoming request requests the events.
             createEvent: (args) => {
-                const eventName = args.name;
-                return eventName;
+                const { eventInput } = args;
+                const event = {
+                    _id: Math.random().toString(),
+                    title: eventInput.title,
+                    description: eventInput.description, 
+                    price: +eventInput.price, //+ to convert arg to number if it wasnt already
+                    date: eventInput.date
+                }
+                events.push(event);
+                return event;
             }
         },
         graphiql: true

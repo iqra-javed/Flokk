@@ -8,8 +8,10 @@ parameter and then converts it to graphql schema object
 */
 const { buildSchema } = require('graphql');
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const Event = require('./models/event');
+const User = require('./models/user');
 
 const app = express();
 
@@ -26,12 +28,24 @@ app.use(
     schema: buildSchema(`
         type Event {
             _id: ID!
-                #ID is a special data type, ! makes id non-nullable / required
+                # ID is a special data type, ! makes id non-nullable / required
             title: String!
             description: String!
             price: Float!
             date: String!
                 # there is no data type in graphQL
+        }
+
+        type User {
+            _id: ID!
+            email: String!
+            password: String
+                # Password is nullable bc we don't want to return it
+        }
+
+        input UserInput {
+            email: String!
+            password: String!
         }
 
         input EventInput {
@@ -52,6 +66,7 @@ app.use(
         type RootMutation {
             createEvent(eventInput: EventInput): Event
                 # takes a string as parameter and will return or echo the Event that was created
+            createUser(userInput: UserInput): User
         }
 
             schema {
@@ -63,34 +78,69 @@ app.use(
       // bundle of all resolvers
       // Resolver names have to match up to the queries / mutation names created above
       events: () => {
-        return Event.find().then(events => {
+        return Event.find()
+          .then(events => {
             return events.map(event => {
-                return {...event._doc};  // accessing ._doc will leave out all the unnecessary meta data
-            })
-        }).catch(err => {
+              return { ...event._doc }; // accessing ._doc will leave out all the unnecessary meta data
+            });
+          })
+          .catch(err => {
             throw err;
-        })
+          });
       }, // this function will be called when an incoming request requests the events.
       createEvent: args => {
         const event = new Event({
           title: args.eventInput.title,
           description: args.eventInput.description,
           price: +args.eventInput.price, //+ to convert arg to number if it wasnt already
-          date: new Date(args.eventInput.date)
+          date: new Date(args.eventInput.date),
+          creator: '5cb3833a93962b91644efe4b' // temporarily hard coded
         });
-        return event
+        let createdEvent;
+        return event // add 'return' keyword because createEvent resolver executes an async operation and otherwise it would jump onto saving instantly
           .save()
           .then(result => {
-            // add 'return' keyword because createEvent resolver executes an async operation and otherwise it would jump onto saving instantly
-            console.log(result);
-            return { ...result._doc }; // _doc is a property provided by Mongoose which give
-            // all the core properties that make up the event object in this case
-            // (result itself, also contains a lot of meta data which we don't need to return).
+              createdEvent = { ...result._doc }; // _doc is a property provided by Mongoose which give
+              // all the core properties that make up the event object in this case
+              // (result itself, also contains a lot of meta data which we don't need to return).
+            return User.findById('5cb3833a93962b91644efe4b')
+          })
+          .then(user => {
+              if (!user) {
+                  throw new Error('User not found.')
+              }
+              user.createdEvents.push(event); // push is provided by Mongoose
+              return user.save(); // update existing user
+          }).then(result => {
+            return createdEvent;
           })
           .catch(err => {
             console.log(err);
             throw err;
           }); // save method is provided by Mongoose
+      },
+      createUser: args => {
+        return User.findOne({ email: args.userInput.email })
+          .then(user => {
+            if (user) {
+              throw new Error('User exists already.');
+            }
+            return bcrypt.hash(args.userInput.password, 12);
+          })
+          .then(hashedPassword => {
+            const user = new User({
+              email: args.userInput.email,
+              password: hashedPassword
+            });
+            return user.save();
+          })
+          .then(result => {
+            return { ...result._doc, password: null }; // set password to null in retrieved user for security. This will NOT set password in db to null.
+          })
+
+          .catch(err => {
+            throw err;
+          });
       }
     },
     graphiql: true

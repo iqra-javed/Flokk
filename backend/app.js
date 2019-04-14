@@ -6,21 +6,24 @@ buildSchema: function that takes a JS template literal string
 (which we can then use to define our schema) as a 
 parameter and then converts it to graphql schema object 
 */
-const { buildSchema }  = require('graphql'); 
+const { buildSchema } = require('graphql');
+const mongoose = require('mongoose');
+
+const Event = require('./models/event');
 
 const app = express();
 
-const events = [];
-
 // Middleware
 app.use(bodyParser.json());
-//express-graphql: Used as  a middleware. 
+//express-graphql: Used as  a middleware.
 // Takes incoming requests and funnels
 // them through the graphql query parser, and then
 // handles them according to the schema and then
 // forwards them to the right resolver
-app.use('/graphql', graphqlHttp({
-        schema: buildSchema(`
+app.use(
+  '/graphql',
+  graphqlHttp({
+    schema: buildSchema(`
         type Event {
             _id: ID!
                 #ID is a special data type, ! makes id non-nullable / required
@@ -56,25 +59,53 @@ app.use('/graphql', graphqlHttp({
                 mutation: RootMutation
             }
         `), // backticks allow writing multy-lined strings
-        rootValue: { // bundle of all resolvers
-            // Resolver names have to match up to the queries / mutation names created above
-            events: () => {
-                return events;
-            }, // this function will be called when an incoming request requests the events.
-            createEvent: (args) => {
-                const { eventInput } = args;
-                const event = {
-                    _id: Math.random().toString(),
-                    title: eventInput.title,
-                    description: eventInput.description, 
-                    price: +eventInput.price, //+ to convert arg to number if it wasnt already
-                    date: eventInput.date
-                }
-                events.push(event);
-                return event;
-            }
-        },
-        graphiql: true
-}))
+    rootValue: {
+      // bundle of all resolvers
+      // Resolver names have to match up to the queries / mutation names created above
+      events: () => {
+        return Event.find().then(events => {
+            return events.map(event => {
+                return {...event._doc};  // accessing ._doc will leave out all the unnecessary meta data
+            })
+        }).catch(err => {
+            throw err;
+        })
+      }, // this function will be called when an incoming request requests the events.
+      createEvent: args => {
+        const event = new Event({
+          title: args.eventInput.title,
+          description: args.eventInput.description,
+          price: +args.eventInput.price, //+ to convert arg to number if it wasnt already
+          date: new Date(args.eventInput.date)
+        });
+        return event
+          .save()
+          .then(result => {
+            // add 'return' keyword because createEvent resolver executes an async operation and otherwise it would jump onto saving instantly
+            console.log(result);
+            return { ...result._doc }; // _doc is a property provided by Mongoose which give
+            // all the core properties that make up the event object in this case
+            // (result itself, also contains a lot of meta data which we don't need to return).
+          })
+          .catch(err => {
+            console.log(err);
+            throw err;
+          }); // save method is provided by Mongoose
+      }
+    },
+    graphiql: true
+  })
+);
 
-app.listen(4000);
+mongoose
+  .connect(
+    `mongodb+srv://${process.env.MONGO_USER}:${
+      process.env.MONGO_PASSWORD
+    }@cluster0-i90yd.mongodb.net/${process.env.MONGO_DB}?retryWrites=true`
+  ) // connect method returns a promise
+  .then(() => {
+    app.listen(4000);
+  })
+  .catch(err => {
+    console.log(err);
+  });
